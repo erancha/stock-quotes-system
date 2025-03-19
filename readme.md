@@ -23,7 +23,7 @@
 - [Services drill-down](#services-drill-down)
   * [1. Receiver Service](#1-receiver-service-1)
     + [REST API](#rest-api)
-    + [Data Validation](#data-validation)
+    + [Data Validation and Normalization](#data-validation-and-normalization)
     + [Kafka Production](#kafka-production)
   * [2. Raw Data Consumer](#2-raw-data-consumer)
     + [Processing](#processing)
@@ -65,7 +65,7 @@ This project is licensed under the Creative Commons Attribution-NonCommercial 4.
 ### [1. Receiver Service](#1-receiver-service-1)
 
 - Provides REST API endpoint for receiving stock quotes from external sources
-- Validates incoming quote data for integrity and format, and (if needed) normalizes the structure for the downstream pipeline services 
+- Validates incoming quote data and normalizes to a standard schema for downstream services
 - Acts as a Kafka producer, publishing validated quotes to the Kafka cluster
 
 ### 2. Kafka Cluster
@@ -77,10 +77,11 @@ This project is licensed under the Creative Commons Attribution-NonCommercial 4.
 
 ### 3. Consumer Services
 
+All services consume the standardized data from the receiver service:
+
 #### [Raw Data Consumer](#2-raw-data-consumer) (Consumer Group: stock-db-writers)
 
 - Stores all incoming quotes in the Raw Quotes Database
-- Performs data transformation if needed
 - Provides historical data storage for analysis
 
 #### [Highest Value Change Service](#3-highest-value-change-service) (Consumer Group: highest-value-change)
@@ -284,13 +285,13 @@ The Receiver Service is the entry point for all stock quote data. It implements:
   }
   ```
 
-#### Data Validation
+#### Data Validation and Normalization
 
-- Symbol format validation
-- Price range checks
-- Volume non-negative validation
-- Timestamp freshness check (reject stale data)
-- Schema validation
+Validates incoming data and normalizes to the standard schema used by all downstream services:
+- Symbol format validation (includes standardization to uppercase)
+- Price range checks (includes normalization to 4 decimal precision)
+- Volume non-negative validation (includes conversion to integer)
+- Timestamp freshness check (includes UTC normalization)
 
 #### Kafka Production
 
@@ -317,7 +318,6 @@ The Raw Data Consumer is responsible for persisting all valid stock quotes:
 - Subscribes to `stock-quotes` topic
 - Consumer group: `stock-db-writers`
 - Batch processing for improved throughput
-- Data transformation if needed (e.g., unit conversions)
 
 #### Storage
 
