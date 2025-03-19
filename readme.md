@@ -1,56 +1,55 @@
 # Stock Quotes System Architecture
 
-### Table of Contents
-
-<!-- toc -->
-
-- [Requirements](#requirements)
-- [Solution Overview](#solution-overview)
-  * [License](#license)
-- [Architecture Diagram](#architecture-diagram)
-- [Components](#components)
-  * [1. Receiver Service](#1-receiver-service)
-  * [2. Kafka Cluster](#2-kafka-cluster)
-  * [3. Consumer Services](#3-consumer-services)
-    + [Raw Data Consumer](#raw-data-consumer)
-    + [Highest Value Change Service](#highest-value-change-service)
-    + [Daily Stats Service](#daily-stats-service)
-  * [4. Grafana Visualization Service](#4-grafana-visualization-service)
-- [Data Flow](#data-flow)
-- [Storage](#storage)
-  * [Why MongoDB?](#why-mongodb)
-- [Scalability Considerations](#scalability-considerations)
-- [Services drill-down](#services-drill-down)
-  * [1. Receiver Service](#1-receiver-service-1)
-    + [REST API](#rest-api)
-    + [Data Validation and Normalization](#data-validation-and-normalization)
-    + [Kafka Production](#kafka-production)
-  * [2. Raw Data Consumer](#2-raw-data-consumer)
-    + [Processing](#processing)
-    + [Storage](#storage-1)
-  * [3. Highest Value Change Service](#3-highest-value-change-service)
-    + [Window Processing](#window-processing)
-    + [Value Change Calculation](#value-change-calculation)
-    + [Performance Optimization](#performance-optimization)
-  * [4. Daily Stats Service](#4-daily-stats-service)
-    + [Daily Calculations](#daily-calculations)
-    + [Data Management](#data-management)
-    + [Monitoring](#monitoring)
-  * [5. Grafana Visualization Service](#5-grafana-visualization-service)
-    + [Dashboards](#dashboards)
-    + [Alerting](#alerting)
-    + [Data Sources](#data-sources)
-    + [Access Control](#access-control)
-
-<!-- tocstop -->
-
 ## Requirements
 
 Please refer to the [Requirements](requirements.md) document.
 
+## Table of Contents
+
+<!-- toc -->
+
+- [Solution Overview](#solution-overview)
+  - [License](#license)
+- [Architecture Diagram](#architecture-diagram)
+- [Components](#components)
+  - [1. Receiver Service](#1-receiver-service)
+  - [2. Kafka Cluster](#2-kafka-cluster)
+  - [3. Consumer Services](#3-consumer-services)
+    - [Raw Data Consumer](#raw-data-consumer)
+    - [Highest Value Change Service](#highest-value-change-service)
+    - [Daily Stats Service](#daily-stats-service)
+  - [4. Grafana Visualization Service](#4-grafana-visualization-service)
+- [Data Flow](#data-flow)
+- [Storage](#storage)
+  - [Why MongoDB?](#why-mongodb)
+- [Scalability Considerations](#scalability-considerations)
+- [Services drill-down](#services-drill-down)
+  - [1. Receiver Service](#1-receiver-service-1)
+    - [REST API](#rest-api)
+    - [Data Validation and Normalization](#data-validation-and-normalization)
+    - [Kafka Production](#kafka-production)
+  - [2. Raw Data Consumer](#2-raw-data-consumer)
+    - [Processing](#processing)
+    - [Storage](#storage-1)
+  - [3. Highest Value Change Service](#3-highest-value-change-service)
+    - [Window Processing](#window-processing)
+    - [Value Change Calculation](#value-change-calculation)
+    - [Performance Optimization](#performance-optimization)
+  - [4. Daily Stats Service](#4-daily-stats-service)
+    - [Daily Calculations](#daily-calculations)
+    - [Data Management](#data-management)
+    - [Monitoring](#monitoring)
+  - [5. Grafana Visualization Service](#5-grafana-visualization-service)
+    - [Dashboards](#dashboards)
+    - [Alerting](#alerting)
+    - [Data Sources](#data-sources)
+    - [Access Control](#access-control)
+
+<!-- tocstop -->
+
 ## Solution Overview
 
-This stock quotes system is designed to process and analyze stock market data in real-time, with a focus on high throughput (~10,000 quotes/sec) and efficient data storage. The system follows a microservices architecture pattern using Kafka as the central message broker.
+The stock quotes system is designed to process and analyze stock market data in real-time, with a focus on high throughput (~10,000 quotes/sec) and efficient data storage. The system follows a microservices architecture pattern using Kafka as the central message broker.
 
 ### License
 
@@ -288,6 +287,7 @@ The Receiver Service is the entry point for all stock quote data. It implements:
 #### Data Validation and Normalization
 
 Validates incoming data and normalizes to the standard schema used by all downstream services:
+
 - Symbol format validation (includes standardization to uppercase)
 - Price range checks (includes normalization to 4 decimal precision)
 - Volume non-negative validation (includes conversion to integer)
