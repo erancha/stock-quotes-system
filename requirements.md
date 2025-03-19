@@ -9,7 +9,6 @@
 
 ## Non-Functional Requirements
 
-- Processing capacity: ~10,000 quotes/sec
-- Processing capacity: ~600,000 quotes/min
-- Data size: ~25 B / event
-- Data volume: ~15 MB/min
+- Processing capacity: ~10,000 quotes/sec (~600,000 quotes/min)
+- Data size: ~25 B/event
+- Data volume: ~15 MB/min (25 B/event \* 600,000 quotes/min)
