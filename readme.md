@@ -1,21 +1,13 @@
 # Stock Quotes System Architecture
 
-## Requirements
-
-Please refer to the [Requirements](requirements.md) document.
-
-## Solution Overview
-
-This stock quotes system is designed to process and analyze stock market data in real-time, with a focus on high throughput (~10,000 quotes/sec) and efficient data storage. The system follows a microservices architecture pattern using Kafka as the central message broker.
-
-## Architecture Diagram
-
-![Architecture Diagram](https://lucid.app/publicSegments/view/9d1a597d-f850-4db4-b392-c292b8febef0/image.jpeg)
-
-## Table of Contents
+### Table of Contents
 
 <!-- toc -->
 
+- [Requirements](#requirements)
+- [Solution Overview](#solution-overview)
+  * [License](#license)
+- [Architecture Diagram](#architecture-diagram)
 - [Components](#components)
   * [1. Receiver Service](#1-receiver-service)
   * [2. Kafka Cluster](#2-kafka-cluster)
@@ -51,6 +43,22 @@ This stock quotes system is designed to process and analyze stock market data in
     + [Access Control](#access-control)
 
 <!-- tocstop -->
+
+## Requirements
+
+Please refer to the [Requirements](requirements.md) document.
+
+## Solution Overview
+
+This stock quotes system is designed to process and analyze stock market data in real-time, with a focus on high throughput (~10,000 quotes/sec) and efficient data storage. The system follows a microservices architecture pattern using Kafka as the central message broker.
+
+### License
+
+This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License. You can view the full license [here](https://creativecommons.org/licenses/by-nc/4.0/).
+
+## Architecture Diagram
+
+![Architecture Diagram](https://lucid.app/publicSegments/view/9d1a597d-f850-4db4-b392-c292b8febef0/image.jpeg)
 
 ## Components
 
@@ -113,6 +121,7 @@ This stock quotes system is designed to process and analyze stock market data in
 The system uses [MongoDB](https://www.mongodb.com/) as the primary database for all storage needs. Here's how each collection is structured and why [MongoDB](#why-mongodb) is suitable:
 
 1. Raw Quotes Collection:
+
    - Stores all quote data (~15 MB/min)
    - [MongoDB's](#why-mongodb) time-series collections (introduced in version 5.0) are optimized for time-based data
    - Built-in support for data expiration with TTL indexes
@@ -129,6 +138,7 @@ The system uses [MongoDB](https://www.mongodb.com/) as the primary database for 
    - Implementation details in [Raw Data Consumer](#2-raw-data-consumer)
 
 2. Highest Value Change Collection:
+
    - Uses [MongoDB's](#why-mongodb) aggregation pipeline for sliding window calculations
    - Stores 30-minute value changes for each symbol
    - Example document:
@@ -168,61 +178,71 @@ The system uses [MongoDB](https://www.mongodb.com/) as the primary database for 
 MongoDB was chosen as the primary database for several reasons:
 
 1. Time-series Support
+
    - [Native time-series collections](https://www.mongodb.com/docs/manual/core/timeseries-collections/)
    - [Efficient range-based queries](https://www.mongodb.com/docs/manual/tutorial/model-time-series-data/)
    - [Automatic data expiration](https://www.mongodb.com/docs/manual/tutorial/expire-data/)
 
 2. Aggregation Framework
+
    - [Powerful pipeline operations](https://www.mongodb.com/docs/manual/core/aggregation-pipeline/)
    - [Real-time analytics](https://www.mongodb.com/docs/manual/aggregation/)
    - [Window functions](https://www.mongodb.com/docs/manual/core/aggregation-pipeline-windows/)
 
 3. Performance Optimization
+
    - Index Creation:
+
      ```javascript
      // Raw Quotes Collection indexes
-     db.rawQuotes.createIndex({ "timestamp": 1, "symbol": 1 });  // For time-range queries
-     db.rawQuotes.createIndex({ "symbol": 1, "timestamp": -1 }); // For latest price lookups
-     
+     db.rawQuotes.createIndex({ timestamp: 1, symbol: 1 }); // For time-range queries
+     db.rawQuotes.createIndex({ symbol: 1, timestamp: -1 }); // For latest price lookups
+
      // Highest Value Change Collection indexes
-     db.valueChanges.createIndex({ 
-       "timestamp": 1,
-       "symbol": 1,
-       "valueChange": -1
+     db.valueChanges.createIndex({
+       timestamp: 1,
+       symbol: 1,
+       valueChange: -1,
      });
-     
+
      // Daily Stats Collection indexes
-     db.dailyStats.createIndex({ 
-       "date": 1,
-       "symbol": 1
+     db.dailyStats.createIndex({
+       date: 1,
+       symbol: 1,
      });
      ```
+
    - [Query Optimization](https://www.mongodb.com/docs/manual/core/query-optimization/):
      ```javascript
      // Covered query example (uses only indexed fields)
-     db.rawQuotes.find(
-       { 
-         symbol: "AAPL",
-         timestamp: { 
-           $gte: ISODate("2025-03-19T00:00:00Z")
-         }
-       },
-       { _id: 0, symbol: 1, price: 1 }
-     ).hint({ symbol: 1, timestamp: -1 });
+     db.rawQuotes
+       .find(
+         {
+           symbol: 'AAPL',
+           timestamp: {
+             $gte: ISODate('2025-03-19T00:00:00Z'),
+           },
+         },
+         { _id: 0, symbol: 1, price: 1 }
+       )
+       .hint({ symbol: 1, timestamp: -1 });
      ```
    - [Aggregation Hints](https://www.mongodb.com/docs/manual/reference/operator/meta/hint/):
      ```javascript
-     db.rawQuotes.aggregate([
+     db.rawQuotes.aggregate(
+       [
+         {
+           $match: {
+             timestamp: {
+               $gte: new Date(Date.now() - 30 * 60 * 1000),
+             },
+           },
+         },
+       ],
        {
-         $match: {
-           timestamp: {
-             $gte: new Date(Date.now() - 30 * 60 * 1000)
-           }
-         }
+         hint: { timestamp: 1, symbol: 1 },
        }
-     ], {
-       hint: { timestamp: 1, symbol: 1 }
-     });
+     );
      ```
 
 4. Scalability Features
@@ -318,6 +338,7 @@ The Highest Value Change Service tracks price movements:
 - Handles out-of-order data within configurable bounds
 
 Example aggregation pipeline for highest value change:
+
 ```javascript
 db.rawQuotes.aggregate([
   // Match documents within the last 30 minutes
@@ -325,50 +346,48 @@ db.rawQuotes.aggregate([
     $match: {
       timestamp: {
         $gte: new Date(Date.now() - 30 * 60 * 1000),
-        $lte: new Date()
-      }
-    }
+        $lte: new Date(),
+      },
+    },
   },
   // Group by symbol and calculate min/max prices
   {
     $group: {
-      _id: "$symbol",
-      maxPrice: { $max: "$price" },
-      minPrice: { $min: "$price" },
-      latestPrice: { $last: "$price" },
-      firstPrice: { $first: "$price" }
-    }
+      _id: '$symbol',
+      maxPrice: { $max: '$price' },
+      minPrice: { $min: '$price' },
+      latestPrice: { $last: '$price' },
+      firstPrice: { $first: '$price' },
+    },
   },
   // Calculate value change
   {
     $project: {
-      symbol: "$_id",
+      symbol: '$_id',
       valueChange: {
         $multiply: [
           {
-            $divide: [
-              { $subtract: ["$latestPrice", "$firstPrice"] },
-              "$firstPrice"
-            ]
+            $divide: [{ $subtract: ['$latestPrice', '$firstPrice'] }, '$firstPrice'],
           },
-          100
-        ]
+          100,
+        ],
       },
-      priceRange: { $subtract: ["$maxPrice", "$minPrice"] }
-    }
+      priceRange: { $subtract: ['$maxPrice', '$minPrice'] },
+    },
   },
   // Sort by absolute value change
   {
-    $sort: { valueChange: -1 }
+    $sort: { valueChange: -1 },
   },
   // Get the top change
   {
-    $limit: 1
-  }
+    $limit: 1,
+  },
 ]);
 ```
 
 #### Value Change Calculation
+
 ```javascript
 valueChange = ((currentPrice - previousPrice) / previousPrice) * 100;
 ```
@@ -392,6 +411,7 @@ The Daily Stats Service maintains daily statistics:
 - Total trading volume
 
 Example aggregation pipeline for daily statistics:
+
 ```javascript
 db.rawQuotes.aggregate([
   // Match documents for today
@@ -399,53 +419,50 @@ db.rawQuotes.aggregate([
     $match: {
       timestamp: {
         $gte: new Date(new Date().setHours(0, 0, 0, 0)),
-        $lt: new Date(new Date().setHours(23, 59, 59, 999))
-      }
-    }
+        $lt: new Date(new Date().setHours(23, 59, 59, 999)),
+      },
+    },
   },
   // Group by symbol
   {
     $group: {
-      _id: "$symbol",
-      openPrice: { $first: "$price" },
-      closePrice: { $last: "$price" },
-      highPrice: { $max: "$price" },
-      lowPrice: { $min: "$price" },
-      totalVolume: { $sum: "$volume" },
+      _id: '$symbol',
+      openPrice: { $first: '$price' },
+      closePrice: { $last: '$price' },
+      highPrice: { $max: '$price' },
+      lowPrice: { $min: '$price' },
+      totalVolume: { $sum: '$volume' },
       // Calculate VWAP
       volumeTimesPrice: {
-        $sum: { $multiply: ["$price", "$volume"] }
-      }
-    }
+        $sum: { $multiply: ['$price', '$volume'] },
+      },
+    },
   },
   // Calculate final statistics
   {
     $project: {
-      symbol: "$_id",
+      symbol: '$_id',
       openPrice: 1,
       closePrice: 1,
       highPrice: 1,
       lowPrice: 1,
       totalVolume: 1,
       vwap: {
-        $divide: ["$volumeTimesPrice", "$totalVolume"]
+        $divide: ['$volumeTimesPrice', '$totalVolume'],
       },
       priceChange: {
-        $subtract: ["$closePrice", "$openPrice"]
+        $subtract: ['$closePrice', '$openPrice'],
       },
       percentageChange: {
         $multiply: [
           {
-            $divide: [
-              { $subtract: ["$closePrice", "$openPrice"] },
-              "$openPrice"
-            ]
+            $divide: [{ $subtract: ['$closePrice', '$openPrice'] }, '$openPrice'],
           },
-          100
-        ]
-      }
-    }
-  }
+          100,
+        ],
+      },
+    },
+  },
 ]);
 ```
 
