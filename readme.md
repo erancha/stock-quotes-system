@@ -65,7 +65,7 @@ This project is licensed under the Creative Commons Attribution-NonCommercial 4.
 ### [1. Receiver Service](#1-receiver-service-1)
 
 - Provides REST API endpoint for receiving stock quotes from external sources
-- Validates incoming quote data for integrity and format
+- Validates incoming quote data for integrity and format, and (if needed) normalizes the structure for the downstream pipeline services 
 - Acts as a Kafka producer, publishing validated quotes to the Kafka cluster
 
 ### 2. Kafka Cluster
