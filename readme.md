@@ -9,520 +9,724 @@ Please refer to the [Requirements](requirements.md) document.
 <!-- toc -->
 
 - [Solution Overview](#solution-overview)
-  - [License](#license)
 - [Architecture Diagram](#architecture-diagram)
-- [Components](#components)
-  - [1. Receiver Service](#1-receiver-service)
-  - [2. Kafka Cluster](#2-kafka-cluster)
-  - [3. Consumer Services](#3-consumer-services)
-    - [Raw Data Consumer](#raw-data-consumer)
-    - [Highest Value Change Service](#highest-value-change-service)
-    - [Daily Stats Service](#daily-stats-service)
-  - [4. Grafana Visualization Service](#4-grafana-visualization-service)
-- [Data Flow](#data-flow)
-- [Storage](#storage)
-  - [Why MongoDB?](#why-mongodb)
-- [Scalability Considerations](#scalability-considerations)
+- [Services](#services)
+  - [1. `Receiver` Service](#1-receiver-service)
+  - [2. `Raw Data` Service](#2-raw-data-service)
+  - [3. `Highest Value Change` Service](#3-highest-value-change-service)
+  - [4. `Daily Stats` Service](#4-daily-stats-service)
+  - [5. `Grafana Visualization` Service](#5-grafana-visualization-service)
 - [Services drill-down](#services-drill-down)
-  - [1. Receiver Service](#1-receiver-service-1)
+  - [1. `Receiver` Service](#1-receiver-service-1)
     - [REST API](#rest-api)
-    - [Data Validation and Normalization](#data-validation-and-normalization)
-    - [Kafka Production](#kafka-production)
-  - [2. Raw Data Consumer](#2-raw-data-consumer)
+    - [Data Validation](#data-validation)
+  - [2. `Raw Data` Service](#2-raw-data-service-1)
     - [Processing](#processing)
-    - [Storage](#storage-1)
-  - [3. Highest Value Change Service](#3-highest-value-change-service)
-    - [Window Processing](#window-processing)
-    - [Value Change Calculation](#value-change-calculation)
-    - [Performance Optimization](#performance-optimization)
-  - [4. Daily Stats Service](#4-daily-stats-service)
-    - [Daily Calculations](#daily-calculations)
-    - [Data Management](#data-management)
-    - [Monitoring](#monitoring)
-  - [5. Grafana Visualization Service](#5-grafana-visualization-service)
+    - [Storage](#storage)
+  - [3. `Highest Value Change` Service](#3-highest-value-change-service-1)
+    - [Simplified flow](#simplified-flow)
+    - [High Availability](#high-availability)
+  - [4. `Daily Stats` Service](#4-daily-stats-service-1)
+    - [`Quote Processing` flow](#quote-processing-flow)
+    - [`Market Close` flow](#market-close-flow)
+    - [Sample persisted document](#sample-persisted-document)
+    - [High Availability](#high-availability-1)
+  - [5. `Grafana Visualization` Service](#5-grafana-visualization-service-1)
     - [Dashboards](#dashboards)
     - [Alerting](#alerting)
     - [Data Sources](#data-sources)
-    - [Access Control](#access-control)
+- [Tech stack](#tech-stack)
+  - [Kafka](#kafka)
+  - [MongoDB](#mongodb)
+- [License](#license)
+- [Appendix A: `Highest Value Change` Service - Basic implementation](#appendix-a-highest-value-change-service---basic-implementation)
+- [Appendix B: `Daily Stats` Service - Basic implementation](#appendix-b-daily-stats-service---basic-implementation)
 
 <!-- tocstop -->
 
 ## Solution Overview
 
-The stock quotes system is designed to process and analyze stock market data in real-time, with a focus on high throughput (~10,000 quotes/sec) and efficient data storage. The system follows a microservices architecture pattern using Kafka as the central message broker.
+The stock quotes system is designed to process and analyze stock market data in real-time. The system:
 
-### License
+- Ingests stock quotes through a REST API ([`Receiver` Service](#1-receiver-service))
+- Stores historical quote data for deep analysis ([`Raw Data` Service](#2-raw-data-service))
+- Tracks significant price changes in 30-minute windows ([`Highest Value Change` Service](#3-highest-value-change-service))
+- Calculates daily statistics for all stocks ([`Daily Stats` Service](#4-daily-stats-service))
+- Provides real-time monitoring and visualization ([`Grafana Visualization` Service](#5-grafana-visualization-service))
+- Handles ~10,000 quotes per second
 
-This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License. You can view the full license [here](https://creativecommons.org/licenses/by-nc/4.0/).
+The solution uses a microservices architecture to maintain separation of concerns and enable independent evolution of each component, with [Kafka](#kafka) streaming data between services.
 
 ## Architecture Diagram
 
 ![Architecture Diagram](https://lucid.app/publicSegments/view/9d1a597d-f850-4db4-b392-c292b8febef0/image.jpeg)
 
-## Components
+## Services
 
-### [1. Receiver Service](#1-receiver-service-1)
+### 1. `Receiver` Service
 
-- Provides REST API endpoint for receiving stock quotes from external sources
-- Validates incoming quote data and normalizes to a standard schema for downstream services
-- Acts as a Kafka producer, publishing validated quotes to the Kafka cluster
+[Requirements](requirements.md): Accept and validate stock quotes
 
-### 2. Kafka Cluster
+Solution:
 
-- Central message broker with the `stock-quotes` topic
-- Configured with 3 partitions for parallel processing
-- Enables decoupling of data ingestion from processing
-- Supports multiple consumer groups for different use cases
+- Load balanced REST API for ingestion
+- Validates and standardizes quotes
+- Publishes to Kafka
+- See [drill-down](#1-receiver-service-1) for details
 
-### 3. Consumer Services
+### 2. `Raw Data` Service
 
-All services consume the standardized data from the receiver service:
+[Requirements](requirements.md): Store quote history for analysis
 
-#### [Raw Data Consumer](#2-raw-data-consumer) (Consumer Group: stock-db-writers)
+Solution:
 
-- Stores all incoming quotes in the Raw Quotes Database
-- Provides historical data storage for analysis
+- Consumes quotes from Kafka: `stock-quotes` topic
+- Persists to MongoDB time-series collection for efficient historical storage
+- See [drill-down](#2-raw-data-service-1) for details
 
-#### [Highest Value Change Service](#3-highest-value-change-service) (Consumer Group: highest-value-change)
+### 3. `Highest Value Change` Service
 
-- Maintains a 30-minute sliding window of stock prices
-- Calculates value changes within the window
-- Records the stock with the highest value change every minute
-- Stores results in the Highest Value Change DB
+[Requirements](requirements.md): Track highest value changes
 
-#### [Daily Stats Service](#4-daily-stats-service) (Consumer Group: daily-stats-tracker)
+- Consumes quotes from Kafka: `stock-quotes` topic
+- Detects price changes in 30-minute windows, in memory, and persists to MongoDB every 1 minute
+- See [drill-down](#3-highest-value-change-service-1) for details
 
-- Tracks daily statistics for each stock
-- Calculates and stores:
-  - Daily price changes
-  - Minimum prices
-  - Maximum prices
-- Persists data in the Daily Stats Database
+### 4. `Daily Stats` Service
 
-### [4. Grafana Visualization Service](#5-grafana-visualization-service)
+[Requirements](requirements.md): Save daily change and min/max prices
 
-- Connects to all three databases for comprehensive data visualization
-- Provides customizable dashboards for different metrics
-- Supports alerting capabilities for monitoring thresholds
-- Enables creation of historical graphs for stock changes
+- Consumes quotes from Kafka: `stock-quotes` topic
+- Calculates and stores daily statistics, in memory, and persists to MongoDB at market close
+- See [drill-down](#4-daily-stats-service-1) for details
 
-## Data Flow
+### 5. `Grafana Visualization` Service
 
-1. External sources send stock quotes to the [Receiver Service](#1-receiver-service-1)
-2. Receiver Service validates and publishes to Kafka
-3. Three consumer services process the data:
-   - [Raw Data Consumer](#2-raw-data-consumer) stores all quotes
-   - [Highest Value Change Service](#3-highest-value-change-service) calculates 30-minute changes
-   - [Daily Stats Service](#4-daily-stats-service) maintains daily statistics
-4. [Grafana Service](#5-grafana-visualization-service) visualizes data from all databases
+[Requirements](requirements.md): Visualize system data
 
-## Storage
+Solution:
 
-The system uses [MongoDB](https://www.mongodb.com/) as the primary database for all storage needs. Here's how each collection is structured and why [MongoDB](#why-mongodb) is suitable:
-
-1. Raw Quotes Collection:
-
-   - Stores all quote data (~15 MB/min)
-   - [MongoDB's](#why-mongodb) time-series collections (introduced in version 5.0) are optimized for time-based data
-   - Built-in support for data expiration with TTL indexes
-   - Efficient range-based queries for historical data
-   - Example document:
-     ```json
-     {
-       "timestamp": ISODate("2025-03-19T14:03:43.123Z"),
-       "symbol": "AAPL",
-       "price": 150.25,
-       "volume": 1000
-     }
-     ```
-   - Implementation details in [Raw Data Consumer](#2-raw-data-consumer)
-
-2. Highest Value Change Collection:
-
-   - Uses [MongoDB's](#why-mongodb) aggregation pipeline for sliding window calculations
-   - Stores 30-minute value changes for each symbol
-   - Example document:
-     ```json
-     {
-       "timestamp": ISODate("2025-03-19T14:03:00.000Z"),
-       "symbol": "AAPL",
-       "valueChange": 2.5,
-       "startPrice": 150.25,
-       "endPrice": 154.00,
-       "windowStart": ISODate("2025-03-19T13:33:00.000Z"),
-       "windowEnd": ISODate("2025-03-19T14:03:00.000Z")
-     }
-     ```
-   - Implementation details in [Highest Value Change Service](#3-highest-value-change-service)
-
-3. Daily Stats Collection:
-   - Uses [MongoDB's](#why-mongodb) atomic operations for reliable updates
-   - Maintains daily statistics with VWAP calculations
-   - Example document:
-     ```json
-     {
-       "date": ISODate("2025-03-19"),
-       "symbol": "AAPL",
-       "openPrice": 150.25,
-       "highPrice": 155.00,
-       "lowPrice": 149.50,
-       "closePrice": 154.00,
-       "vwap": 152.75,
-       "volume": 1000000
-     }
-     ```
-   - Implementation details in [Daily Stats Service](#4-daily-stats-service)
-
-### Why MongoDB?
-
-MongoDB was chosen as the primary database for several reasons:
-
-1. Time-series Support
-
-   - [Native time-series collections](https://www.mongodb.com/docs/manual/core/timeseries-collections/)
-   - [Efficient range-based queries](https://www.mongodb.com/docs/manual/tutorial/model-time-series-data/)
-   - [Automatic data expiration](https://www.mongodb.com/docs/manual/tutorial/expire-data/)
-
-2. Aggregation Framework
-
-   - [Powerful pipeline operations](https://www.mongodb.com/docs/manual/core/aggregation-pipeline/)
-   - [Real-time analytics](https://www.mongodb.com/docs/manual/aggregation/)
-   - [Window functions](https://www.mongodb.com/docs/manual/core/aggregation-pipeline-windows/)
-
-3. Performance Optimization
-
-   - Index Creation:
-
-     ```javascript
-     // Raw Quotes Collection indexes
-     db.rawQuotes.createIndex({ timestamp: 1, symbol: 1 }); // For time-range queries
-     db.rawQuotes.createIndex({ symbol: 1, timestamp: -1 }); // For latest price lookups
-
-     // Highest Value Change Collection indexes
-     db.valueChanges.createIndex({
-       timestamp: 1,
-       symbol: 1,
-       valueChange: -1,
-     });
-
-     // Daily Stats Collection indexes
-     db.dailyStats.createIndex({
-       date: 1,
-       symbol: 1,
-     });
-     ```
-
-   - [Query Optimization](https://www.mongodb.com/docs/manual/core/query-optimization/):
-     ```javascript
-     // Covered query example (uses only indexed fields)
-     db.rawQuotes
-       .find(
-         {
-           symbol: 'AAPL',
-           timestamp: {
-             $gte: ISODate('2025-03-19T00:00:00Z'),
-           },
-         },
-         { _id: 0, symbol: 1, price: 1 }
-       )
-       .hint({ symbol: 1, timestamp: -1 });
-     ```
-   - [Aggregation Hints](https://www.mongodb.com/docs/manual/reference/operator/meta/hint/):
-     ```javascript
-     db.rawQuotes.aggregate(
-       [
-         {
-           $match: {
-             timestamp: {
-               $gte: new Date(Date.now() - 30 * 60 * 1000),
-             },
-           },
-         },
-       ],
-       {
-         hint: { timestamp: 1, symbol: 1 },
-       }
-     );
-     ```
-
-4. Scalability Features
-   - [Horizontal sharding](https://www.mongodb.com/docs/manual/sharding/)
-   - [Replica sets](https://www.mongodb.com/docs/manual/replication/)
-   - [Read preferences](https://www.mongodb.com/docs/manual/core/read-preference/)
-   - [Write concerns](https://www.mongodb.com/docs/manual/reference/write-concern/)
-
-## Scalability Considerations
-
-- Kafka partitioning enables parallel processing
-- Separate consumer groups allow independent scaling
-- Each service can be scaled horizontally based on load
-- Data processing is distributed across multiple services
-- [MongoDB](#why-mongodb) horizontal scaling through:
-  - Sharding for data distribution
-  - Replica sets for high availability
-  - Read operations from secondary nodes
-  - Write concern configuration for consistency
+- Reads from MongoDB for real-time monitoring and analysis
+- See [drill-down](#5-grafana-visualization-service-1) for details
 
 ## Services drill-down
 
-### 1. Receiver Service
+### 1. `Receiver` Service
 
-The Receiver Service is the entry point for all stock quote data. It implements:
+[Requirements](requirements.md): Accept and validate stock quotes
 
 #### REST API
 
 - Endpoint: `/api/v1/quotes`
 - Method: POST
-- Rate limiting: Configurable per client
-- Input validation:
-  ```json
-  {
-    "symbol": "string",
-    "price": "number",
-    "volume": "number",
-    "timestamp": "ISO8601"
-  }
-  ```
+- Rate limiting: 10,000 requests/sec
 
-#### Data Validation and Normalization
+#### Data Validation
 
-Validates incoming data and normalizes to the standard schema used by all downstream services:
-
-- Symbol format validation (includes standardization to uppercase)
-- Price range checks (includes normalization to 4 decimal precision)
-- Volume non-negative validation (includes conversion to integer)
-- Timestamp freshness check (includes UTC normalization)
-
-#### Kafka Production
-
-- Topic: `stock-quotes`
-- Partitioning strategy: By stock symbol
-- Message format:
+- Required fields: symbol, price, timestamp
+- Price validation: > 0
+- Symbol validation: Alphanumeric, max 10 chars
+- Example document:
   ```json
   {
     "symbol": "AAPL",
     "price": 150.25,
     "volume": 1000,
-    "timestamp": "2025-03-19T14:03:43.123Z",
-    "receivedAt": "2025-03-19T14:03:43.125Z",
-    "validationStatus": "PASSED"
+    "timestamp": ISODate("2025-03-19T14:03:43.123Z")
   }
   ```
 
-### 2. Raw Data Consumer
+### 2. `Raw Data` Service
 
-The Raw Data Consumer is responsible for persisting all valid stock quotes:
+[Requirements](requirements.md): Store quote history for analysis
 
 #### Processing
 
-- Subscribes to `stock-quotes` topic
-- Consumer group: `stock-db-writers`
-- Batch processing for improved throughput
+- Error handling:
+  - Dead letter queue for invalid data
+  - Retry policy: 3 attempts
+  - Exponential backoff: 1s, 2s, 4s
 
 #### Storage
 
-- Uses [MongoDB](#why-mongodb) time-series collection
-- Implements retry mechanism for failed writes
-- Monitors write performance
-- Implements data retention policies
+- Collection: time-series optimized
+- Automatic data cleanup after 30-day retention period
+- Sharding:
+  - Key: symbol (even distribution of writes)
+- Indexes:
+  - Primary: { timestamp: 1, symbol: 1 } - For efficient time-range queries by symbol
+  - Secondary: { symbol: 1, timestamp: -1 } - For latest price lookups by symbol
+  - TTL: timestamp (30-day expiry)
 
-### 3. Highest Value Change Service
+### 3. `Highest Value Change` Service
 
-The Highest Value Change Service tracks price movements:
+[Requirements](requirements.md): Track highest value changes
 
-#### Window Processing
-
-- Maintains 30-minute sliding windows
-- Updates every minute
-- Uses [MongoDB's](#why-mongodb) aggregation pipeline
-- Handles out-of-order data within configurable bounds
-
-Example aggregation pipeline for highest value change:
+#### Simplified flow
 
 ```javascript
-db.rawQuotes.aggregate([
-  // Match documents within the last 30 minutes
-  {
-    $match: {
-      timestamp: {
-        $gte: new Date(Date.now() - 30 * 60 * 1000),
-        $lte: new Date(),
-      },
-    },
-  },
-  // Group by symbol and calculate min/max prices
-  {
-    $group: {
-      _id: '$symbol',
-      maxPrice: { $max: '$price' },
-      minPrice: { $min: '$price' },
-      latestPrice: { $last: '$price' },
-      firstPrice: { $first: '$price' },
-    },
-  },
-  // Calculate value change
-  {
-    $project: {
-      symbol: '$_id',
-      valueChange: {
-        $multiply: [
-          {
-            $divide: [{ $subtract: ['$latestPrice', '$firstPrice'] }, '$firstPrice'],
-          },
-          100,
-        ],
-      },
-      priceRange: { $subtract: ['$maxPrice', '$minPrice'] },
-    },
-  },
-  // Sort by absolute value change
-  {
-    $sort: { valueChange: -1 },
-  },
-  // Get the top change
-  {
-    $limit: 1,
-  },
-]);
+1. Initialize:
+   - Create 'Kafka consumer' (group: 'stock-db-writers')
+   - Initialize 'in-memory price windows' // 30-min sliding window per symbol'
+   - Connect to MongoDB
+
+2. Main Processing Loop:
+   while (true) {
+       // Consume messages from Kafka
+       messages = kafka.consume("stock-quotes")
+
+       for each message in messages {
+           // Update in-memory window
+           priceWindow = getOrCreateWindow(message.symbol)
+           priceWindow.add(message.price, message.timestamp)
+
+           // Clean old data (> 30 minutes)
+           priceWindow.cleanup()
+       }
+
+       // Every minute
+       if (isMinuteInterval()) {
+           for each symbol in the 'in-memory price windows' {
+               // Calculate value change
+               window = getWindow(symbol)
+               'valueChange' = ((window.high - window.low) / window.low) * 100
+
+               // Persist to MongoDB
+               mongodb.insert({
+                   timestamp: currentTime,
+                   symbol: symbol,
+                   valueChange: 'valueChange',
+                   startPrice: window.startPrice,
+                   endPrice: window.currentPrice,
+                   windowStart: window.startTime,
+                   windowEnd: window.endTime
+               })
+           }
+       }
+   }
+
+3. Error Handling:
+   try {
+       // Main processing loop
+   } catch (error) {
+       // Retry up to 3 times
+       // If still failing, send to dead letter queue
+   }
 ```
 
-#### Value Change Calculation
+Sample persisted document:
+
+```json
+{
+  "timestamp": ISODate("2025-03-19T14:03:00.000Z"),
+  "symbol": "AAPL",
+  "valueChange": 2.5,
+  "startPrice": 150.25,
+  "endPrice": 154.00,
+  "windowStart": ISODate("2025-03-19T13:33:00.000Z"),
+  "windowEnd": ISODate("2025-03-19T14:03:00.000Z")
+}
+```
+
+- Refer to [Appendix A: `Highest Value Change` Service - Implementation](#appendix-a-highest-value-change-service---implementation)
+
+#### High Availability
+
+- Active-standby deployment:
+  - 2 nodes minimum
+  - Automatic failover via leader election
+  - Kafka consumer group rebalancing
+- Recovery strategy:
+  - Resume from last committed Kafka offset
+  - Rebuild 30-min window from Kafka history
+
+### 4. `Daily Stats` Service
+
+[Requirements](requirements.md): Save daily change and min/max prices
+
+#### `Quote Processing` flow
 
 ```javascript
-valueChange = ((currentPrice - previousPrice) / previousPrice) * 100;
+// For each quote received from Kafka
+processQuote(quote) {
+  const stats = dailyStats.get(quote.symbol) || createNewDayStats(quote.symbol)
+
+  // Update running calculations
+  if (isMarketOpen()) {
+    if (!stats.openPrice) stats.openPrice = quote.price  // First quote of day
+    stats.highPrice = Math.max(stats.highPrice, quote.price)
+    stats.lowPrice = Math.min(stats.lowPrice, quote.price)
+    stats.volume += quote.volume
+    stats.vwapNumerator += quote.price * quote.volume  // For VWAP calculation
+  }
+}
+
+// Triggered by market close event
+async onMarketClose() {
+  const batchSize = 1000
+  for (const symbolBatch of getBatches(dailyStats.keys(), batchSize)) {
+    await Promise.all(symbolBatch.map(async symbol => {
+      const stats = dailyStats.get(symbol)
+      stats.closePrice = getLastPrice(symbol)
+      stats.vwap = stats.vwapNumerator / stats.volume
+
+      // Persist to MongoDB
+      await persistDailyStats(stats)
+    }))
+  }
+}
 ```
 
-#### Performance Optimization
+#### Sample persisted document
 
-- In-memory caching of recent data
-- Indexed queries for historical data
-- Parallel processing of different symbols
+```json
+{
+  "date": ISODate("2025-03-19"),
+  "symbol": "AAPL",
+  "openPrice": 150.25,
+  "highPrice": 155.00,
+  "lowPrice": 149.50,
+  "closePrice": 154.00,
+  "vwap": 152.75,
+  "volume": 1000000,
+  "valueChangePercent": 2.5,
+  "movingAverages": {
+    "5day": 151.20,
+    "20day": 148.75
+  }
+}
+```
 
-### 4. Daily Stats Service
+#### High Availability
 
-The Daily Stats Service maintains daily statistics:
+The service uses an active-active deployment model:
 
-#### Daily Calculations
-
-- Opening price (first quote of the day)
-- Closing price (last quote)
-- High/Low prices
-- Volume weighted average price (VWAP)
-- Total trading volume
-
-Example aggregation pipeline for daily statistics:
+1. Partition Assignment:
 
 ```javascript
-db.rawQuotes.aggregate([
-  // Match documents for today
-  {
-    $match: {
-      timestamp: {
-        $gte: new Date(new Date().setHours(0, 0, 0, 0)),
-        $lt: new Date(new Date().setHours(23, 59, 59, 999)),
-      },
-    },
-  },
-  // Group by symbol
-  {
-    $group: {
-      _id: '$symbol',
-      openPrice: { $first: '$price' },
-      closePrice: { $last: '$price' },
-      highPrice: { $max: '$price' },
-      lowPrice: { $min: '$price' },
-      totalVolume: { $sum: '$volume' },
-      // Calculate VWAP
-      volumeTimesPrice: {
-        $sum: { $multiply: ['$price', '$volume'] },
-      },
-    },
-  },
-  // Calculate final statistics
-  {
-    $project: {
-      symbol: '$_id',
-      openPrice: 1,
-      closePrice: 1,
-      highPrice: 1,
-      lowPrice: 1,
-      totalVolume: 1,
-      vwap: {
-        $divide: ['$volumeTimesPrice', '$totalVolume'],
-      },
-      priceChange: {
-        $subtract: ['$closePrice', '$openPrice'],
-      },
-      percentageChange: {
-        $multiply: [
-          {
-            $divide: [{ $subtract: ['$closePrice', '$openPrice'] }, '$openPrice'],
-          },
-          100,
-        ],
-      },
-    },
-  },
-]);
+// Each instance gets assigned specific symbols via Kafka consumer group
+onPartitionsAssigned(partitions) {
+  // Clear existing state for reassigned partitions
+  for (const partition of partitions) {
+    const symbols = getSymbolsForPartition(partition)
+    symbols.forEach(symbol => {
+      dailyStats.set(symbol, loadLatestStats(symbol))
+    })
+  }
+}
 ```
 
-#### Data Management
+2. Recovery Flow:
 
-- Automatic day boundary handling using [MongoDB's](#why-mongodb) date operations
-- End-of-day calculations using aggregation pipeline
-- Historical data archival using [MongoDB's](#why-mongodb) time-based features
-- Data correction handling with atomic operations
+```javascript
+// On instance startup or failover
+async recoverState() {
+  // Get assigned symbols from Kafka consumer group
+  const symbols = getAssignedSymbols()
 
-#### Monitoring
+  // Rebuild state from MongoDB and Kafka
+  for (const symbol of symbols) {
+    const stats = await loadLatestStats(symbol)
+    const recentQuotes = await getRecentQuotes(symbol)
+    recentQuotes.forEach(quote => processQuote(quote))
+  }
+}
+```
 
-- Data quality metrics
-- Processing latency
-- Coverage verification
-- Alert on missing data
-
-### 5. Grafana Visualization Service
-
-The Grafana service provides comprehensive visualization and monitoring capabilities:
+### 5. `Grafana Visualization` Service
 
 #### Dashboards
 
-- Real-time Stock Prices
-  - Current prices
-  - Volume indicators
-  - Price trends
-- 30-Minute Analysis
-  - Highest value changes
-  - Moving averages
-  - Volatility indicators
-- Daily Statistics
-  - OHLC (Open/High/Low/Close) charts
-  - Volume analysis
-  - Daily performance metrics
+- Real-time monitoring:
+  - Current stock prices and volumes
+  - Highest value changes (30-min window)
+  - Daily statistics
+- Market status:
+  - Opening/closing detection
+  - Trading halts
+  - Holiday calendar
 
 #### Alerting
 
-- Price threshold alerts
-- Volume spike detection
-- Data quality warnings
-- System health monitoring
-  - Service latency
-  - Processing delays
-  - Data gaps
+- Market events:
+  - Unusual price movements
+  - Trading halts
+  - Market open/close
 
 #### Data Sources
 
-- [MongoDB](#why-mongodb) connections
-  - Raw quotes collection
-  - Highest value changes
-  - Daily statistics
-- Query optimization
-  - Caching strategies
-  - Time-based filtering
-  - Aggregation at source
+- MongoDB collections:
+  - Raw quotes (30-day history)
+  - Highest value changes (90-day history)
+  - Daily statistics (365-day history)
 
-#### Access Control
+## Tech stack
 
-- Role-based access
-- Dashboard sharing
-- API token management
-- Audit logging
+### Kafka
+
+- Central message broker for decoupling
+- Partitioned by stock symbol for parallel processing
+- Replicated for fault tolerance
+
+1. Configuration
+
+- 3 brokers for redundancy
+- 3 partitions for parallel processing
+- Replication factor: 3
+- Message retention: 30 days
+
+2. Performance
+
+- Throughput: ~100 MB/sec
+- Latency: < 10ms
+- Disk usage: ~1 TB
+
+3. Monitoring
+
+- Kafka metrics monitoring
+- Broker health checks
+- Partition leader election monitoring
+
+### MongoDB
+
+The decision to use MongoDB over PostgreSQL was driven by our system's specific performance requirements:
+
+1. Real-Time Window Calculations (Critical)
+
+   - Requirement: Process 30-minute sliding windows with < 2 second query latency
+   - MongoDB Solution:
+     - Native time-series collections with automatic time-based chunking
+     - Optimized storage format for sequential time-based reads
+     - Built-in window functions in aggregation pipeline
+   - PostgreSQL Alternative:
+     - Would need manual time-based partitioning
+     - Complex materialized views requiring frequent updates
+     - Window functions potentially slower on high-volume data
+
+2. High-Volume Write Performance (Critical)
+
+   - Requirement: Ingest 10,000 quotes/sec (~15 MB/min) with < 50ms latency
+   - MongoDB Solution:
+     - Automatic sharding by symbol for parallel writes
+     - Optimized batch processing with w1 write concern
+     - No schema validation overhead
+   - PostgreSQL Alternative:
+     - Manual table partitioning needed
+     - Write-ahead logging impacts write speed
+     - Schema validation on every insert
+
+3. Data Lifecycle Management
+
+   - Requirements:
+     - Raw quotes: 30 days, 648 GB
+     - Value changes: 90 days, 2.6 MB
+     - Daily stats: 365 days, 19 MB
+   - MongoDB Solution:
+     - TTL indexes for automatic expiration
+     - Different write/read patterns per collection
+     - Efficient time-based data pruning
+   - PostgreSQL Alternative:
+     - Custom cleanup jobs needed
+     - Manual partition rotation
+     - More complex backup strategy
+
+MongoDB's native time-series capabilities provide these features out-of-the-box, significantly reducing both development effort and operational complexity compared to implementing equivalent functionality in PostgreSQL.
+
+## License
+
+This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License. You can view the full license [here](https://creativecommons.org/licenses/by-nc/4.0/).
+
+## Appendix A: `Highest Value Change` Service - Basic implementation
+
+```javascript
+class SymbolWindows {
+  constructor(windowMinutes = 30) {
+    this.windowMinutes = windowMinutes;
+    this.windows = new Map(); // symbol -> PriceWindow
+    this.highestChange = { symbol: null, change: 0 };
+  }
+
+  getOrCreateWindow(symbol) {
+    let window = this.windows.get(symbol);
+    if (!window) {
+      window = new PriceWindow(this.windowMinutes);
+      this.windows.set(symbol, window);
+    }
+    return window;
+  }
+
+  processQuote(quote) {
+    const window = this.getOrCreateWindow(quote.symbol);
+    window.add(quote);
+
+    // Update highest value change if needed
+    const change = window.getValueChange();
+    if (Math.abs(change) > Math.abs(this.highestChange.change)) {
+      this.highestChange = { symbol: quote.symbol, change };
+    }
+  }
+
+  getHighestChange() {
+    return this.highestChange;
+  }
+
+  cleanup() {
+    const now = Date.now();
+    for (const [symbol, window] of this.windows.entries()) {
+      if (window.getLastUpdateTime() < now - 24 * 60 * 60 * 1000) {
+        this.windows.delete(symbol);
+      }
+    }
+  }
+}
+
+class PriceWindow {
+  constructor(windowMinutes = 30) {
+    this.maxSize = windowMinutes * 60;
+    this.buffer = new Array(this.maxSize);
+    this.head = 0;
+    this.count = 0;
+    this.lastUpdateTime = 0;
+  }
+
+  add(quote) {
+    const now = Date.now();
+    const position = Math.floor((now % (30 * 60 * 1000)) / 1000);
+
+    this.buffer[position] = {
+      timestamp: quote.timestamp,
+      price: quote.price,
+    };
+
+    if (this.count < this.maxSize) this.count++;
+    this.head = (position + 1) % this.maxSize;
+    this.lastUpdateTime = now;
+  }
+
+  getValueChange() {
+    if (this.count < 2) return 0;
+
+    const now = Date.now();
+    let oldest = null;
+    let newest = null;
+
+    for (let i = 0; i < this.count; i++) {
+      const entry = this.buffer[(this.head + i) % this.maxSize];
+      if (!entry) continue;
+
+      const age = now - entry.timestamp;
+      if (age > 30 * 60 * 1000) continue;
+
+      if (!oldest || entry.timestamp < oldest.timestamp) oldest = entry;
+      if (!newest || entry.timestamp > newest.timestamp) newest = entry;
+    }
+
+    if (!oldest || !newest) return 0;
+    return ((newest.price - oldest.price) / oldest.price) * 100;
+  }
+
+  getLastUpdateTime() {
+    return this.lastUpdateTime;
+  }
+}
+
+class HighestValueChangeConsumer {
+  constructor(consumerId) {
+    this.consumerId = consumerId;
+    this.windows = null;
+    this.cleanupInterval = null;
+    this.coordinator = null;
+  }
+
+  async start() {
+    this.coordinator = new ConsumerGroupCoordinator('highest-value-change');
+    this.windows = await this.recoverState();
+    this.cleanupInterval = setInterval(() => this.windows.cleanup(), 60 * 60 * 1000);
+
+    kafka.consume('stock-quotes', {
+      groupId: 'highest-value-change',
+      fromLatest: true,
+      callback: (quote) => {
+        if (this.isSymbolAssigned(quote.symbol)) {
+          this.windows.processQuote(quote);
+        }
+      },
+    });
+
+    setInterval(() => this.reportHighestChange(), 60 * 1000);
+  }
+
+  isSymbolAssigned(symbol) {
+    const partition = this.coordinator.getPartitionForSymbol(symbol);
+    return partition === this.consumerId;
+  }
+
+  async recoverState() {
+    const windows = new SymbolWindows();
+    const assignedPartitions = await this.coordinator.getAssignedPartitions();
+
+    const quotes = await kafka.consume('stock-quotes', {
+      fromTimestamp: Date.now() - 30 * 60 * 1000,
+      partitions: assignedPartitions,
+    });
+
+    quotes.forEach((quote) => {
+      if (this.isSymbolAssigned(quote.symbol)) {
+        windows.processQuote(quote);
+      }
+    });
+
+    return windows;
+  }
+
+  async reportHighestChange() {
+    const highestChange = this.windows.getHighestChange();
+    await this.coordinator.reportHighestChange(this.consumerId, highestChange);
+
+    if (await this.coordinator.isLeader()) {
+      const allChanges = await this.coordinator.getAllHighestChanges();
+      const globalHighest = allChanges.reduce((max, curr) => (Math.abs(curr.change) > Math.abs(max.change) ? curr : max));
+
+      await kafka.produce('highest-value-changes', globalHighest);
+    }
+  }
+
+  stop() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+  }
+}
+```
+
+## Appendix B: `Daily Stats` Service - Basic implementation
+
+```javascript
+class DailyStatsService {
+  constructor(consumerId) {
+    this.consumerId = consumerId;
+    this.dailyStats = new Map(); // symbol -> DailyStats
+    this.coordinator = null;
+  }
+
+  async start() {
+    this.coordinator = new ConsumerGroupCoordinator('daily-stats');
+    await this.recoverState();
+
+    kafka.consume('stock-quotes', {
+      groupId: 'daily-stats',
+      fromLatest: true,
+      callback: (quote) => {
+        if (this.isSymbolAssigned(quote.symbol)) {
+          this.processQuote(quote);
+        }
+      },
+    });
+
+    // Schedule end-of-day processing
+    this.scheduleEndOfDay();
+  }
+
+  isSymbolAssigned(symbol) {
+    const partition = this.coordinator.getPartitionForSymbol(symbol);
+    return partition === this.consumerId;
+  }
+
+  async recoverState() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const stats = await mongodb.dailyStats.find({
+      date: today,
+      partition: this.consumerId,
+    });
+
+    stats.forEach((stat) => {
+      this.dailyStats.set(stat.symbol, new DailyStats(stat));
+    });
+  }
+
+  processQuote(quote) {
+    let stats = this.dailyStats.get(quote.symbol);
+    if (!stats) {
+      stats = new DailyStats({ symbol: quote.symbol });
+      this.dailyStats.set(quote.symbol, stats);
+    }
+    stats.processQuote(quote);
+  }
+
+  scheduleEndOfDay() {
+    const now = new Date();
+    const marketClose = new Date(now);
+    marketClose.setHours(16, 0, 0, 0);
+
+    if (now > marketClose) {
+      marketClose.setDate(marketClose.getDate() + 1);
+    }
+
+    setTimeout(() => {
+      this.processEndOfDay();
+      this.scheduleEndOfDay();
+    }, marketClose - now);
+  }
+
+  async processEndOfDay() {
+    const batch = [];
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+
+    for (const [symbol, stats] of this.dailyStats.entries()) {
+      batch.push({
+        date,
+        symbol,
+        partition: this.consumerId,
+        openPrice: stats.openPrice,
+        closePrice: stats.lastPrice,
+        highPrice: stats.highPrice,
+        lowPrice: stats.lowPrice,
+        priceChange: stats.getPriceChange(),
+        percentChange: stats.getPercentChange(),
+      });
+    }
+
+    await mongodb.dailyStats.insertMany(batch);
+    this.dailyStats.clear();
+  }
+
+  stop() {
+    // Cleanup and save state if needed
+  }
+}
+
+class DailyStats {
+  constructor(data = {}) {
+    this.symbol = data.symbol;
+    this.openPrice = data.openPrice || null;
+    this.lastPrice = data.closePrice || null;
+    this.highPrice = data.highPrice || -Infinity;
+    this.lowPrice = data.lowPrice || Infinity;
+    this.quoteCount = 0;
+  }
+
+  processQuote(quote) {
+    if (this.quoteCount === 0) {
+      this.openPrice = quote.price;
+    }
+
+    this.lastPrice = quote.price;
+    this.highPrice = Math.max(this.highPrice, quote.price);
+    this.lowPrice = Math.min(this.lowPrice, quote.price);
+    this.quoteCount++;
+  }
+
+  getPriceChange() {
+    if (!this.openPrice || !this.lastPrice) return 0;
+    return this.lastPrice - this.openPrice;
+  }
+
+  getPercentChange() {
+    if (!this.openPrice || !this.lastPrice) return 0;
+    return ((this.lastPrice - this.openPrice) / this.openPrice) * 100;
+  }
+}
+```
