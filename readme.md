@@ -11,33 +11,33 @@ Please refer to the [Requirements](requirements.md) document.
 - [Solution Overview](#solution-overview)
 - [Architecture Diagram](#architecture-diagram)
 - [Services](#services)
-  - [1. `Receiver` Service](#1-receiver-service)
-  - [2. `Raw Data` Service](#2-raw-data-service)
-  - [3. `Highest Value Change` Service](#3-highest-value-change-service)
-  - [4. `Daily Stats` Service](#4-daily-stats-service)
-  - [5. `Grafana Visualization` Service](#5-grafana-visualization-service)
+  * [1. `Receiver` Service](#1-receiver-service)
+  * [2. `Raw Data` Service](#2-raw-data-service)
+  * [3. `Highest Value Change` Service](#3-highest-value-change-service)
+  * [4. `Daily Stats` Service](#4-daily-stats-service)
+  * [5. `Grafana Visualization` Service](#5-grafana-visualization-service)
 - [Services drill-down](#services-drill-down)
-  - [1. `Receiver` Service](#1-receiver-service-1)
-    - [REST API](#rest-api)
-    - [Data Validation](#data-validation)
-  - [2. `Raw Data` Service](#2-raw-data-service-1)
-    - [Processing](#processing)
-    - [Storage](#storage)
-  - [3. `Highest Value Change` Service](#3-highest-value-change-service-1)
-    - [Simplified flow](#simplified-flow)
-    - [High Availability](#high-availability)
-  - [4. `Daily Stats` Service](#4-daily-stats-service-1)
-    - [`Quote Processing` flow](#quote-processing-flow)
-    - [`Market Close` flow](#market-close-flow)
-    - [Sample persisted document](#sample-persisted-document)
-    - [High Availability](#high-availability-1)
-  - [5. `Grafana Visualization` Service](#5-grafana-visualization-service-1)
-    - [Dashboards](#dashboards)
-    - [Alerting](#alerting)
-    - [Data Sources](#data-sources)
+  * [1. `Receiver` Service](#1-receiver-service-1)
+    + [REST API](#rest-api)
+    + [Data Validation](#data-validation)
+  * [2. `Raw Data` Service](#2-raw-data-service-1)
+    + [Processing](#processing)
+    + [Storage](#storage)
+  * [3. `Highest Value Change` Service](#3-highest-value-change-service-1)
+    + [Simplified flow](#simplified-flow)
+    + [Sample persisted document](#sample-persisted-document)
+    + [High Availability](#high-availability)
+  * [4. `Daily Stats` Service](#4-daily-stats-service-1)
+    + [Simplified flow](#simplified-flow-1)
+    + [Sample persisted document](#sample-persisted-document-1)
+    + [High Availability](#high-availability-1)
+  * [5. `Grafana Visualization` Service](#5-grafana-visualization-service-1)
+    + [Dashboards](#dashboards)
+    + [Alerting](#alerting)
+    + [Data Sources](#data-sources)
 - [Tech stack](#tech-stack)
-  - [Kafka](#kafka)
-  - [MongoDB](#mongodb)
+  * [Kafka](#kafka)
+  * [MongoDB](#mongodb)
 - [License](#license)
 - [Appendix A: `Highest Value Change` Service - Basic implementation](#appendix-a-highest-value-change-service---basic-implementation)
 - [Appendix B: `Daily Stats` Service - Basic implementation](#appendix-b-daily-stats-service---basic-implementation)
@@ -214,7 +214,7 @@ Solution:
    }
 ```
 
-Sample persisted document:
+#### Sample persisted document
 
 ```json
 {
@@ -244,7 +244,7 @@ Sample persisted document:
 
 [Requirements](requirements.md): Save daily change and min/max prices
 
-#### `Quote Processing` flow
+#### Simplified flow
 
 ```javascript
 // For each quote received from Kafka
