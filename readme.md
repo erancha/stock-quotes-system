@@ -213,8 +213,6 @@ Solution:
    }
 ```
 
-(see [implementation details](#appendix-a-highest-value-change-service---implementation-notes))
-
 #### Sample persisted document
 
 ```json
