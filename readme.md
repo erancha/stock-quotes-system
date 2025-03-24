@@ -219,7 +219,7 @@ Solution:
 {
   "timestamp": ISODate("2025-03-19T14:03:00.000Z"),
   "symbol": "AAPL",
-  "valueChange": 2.5,
+  "valueChange": 2.5%,
   "startPrice": 150.25,
   "endPrice": 154.00,
   "windowStart": ISODate("2025-03-19T13:33:00.000Z"),
