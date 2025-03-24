@@ -38,9 +38,8 @@ Please refer to the [Requirements](requirements.md) document.
 - [Tech stack](#tech-stack)
   * [Kafka](#kafka)
   * [MongoDB](#mongodb)
+- [Appendix A: `Highest Value Change` Service - implementation notes](#appendix-a-highest-value-change-service---implementation-notes)
 - [License](#license)
-- [Appendix A: `Highest Value Change` Service - Basic implementation](#appendix-a-highest-value-change-service---basic-implementation)
-- [Appendix B: `Daily Stats` Service - Basic implementation](#appendix-b-daily-stats-service---basic-implementation)
 
 <!-- tocstop -->
 
@@ -86,7 +85,7 @@ Solution:
 
 ### 3. `Highest Value Change` Service
 
-[Requirements](requirements.md): Track highest value changes
+[Requirements](requirements.md): Save each minute the stock symbol with highest value change in last 30 minutes
 
 - Consumes quotes from Kafka: `stock-quotes` topic
 - Detects price changes in 30-minute windows, in memory, and persists to MongoDB every 1 minute
@@ -160,14 +159,14 @@ Solution:
 
 ### 3. `Highest Value Change` Service
 
-[Requirements](requirements.md): Track highest value changes
+[Requirements](requirements.md): Save each minute the stock symbol with highest value change in last 30 minutes
 
 #### Simplified flow
 
 ```javascript
 1. Initialize:
    - Create 'Kafka consumer' (group: 'stock-db-writers')
-   - Initialize 'in-memory price windows' // 30-min sliding window per symbol'
+   - Initialize 'in-memory price windows' // 30-min sliding windows, one per symbol'
    - Connect to MongoDB
 
 2. Main Processing Loop:
@@ -178,7 +177,7 @@ Solution:
        for each message in messages {
            // Update in-memory window
            priceWindow = getOrCreateWindow(message.symbol)
-           priceWindow.add(message.price, message.timestamp)
+           priceWindow.add(message.price, message.timestamp) // responsible to manage high and low
 
            // Clean old data (> 30 minutes)
            priceWindow.cleanup()
@@ -186,22 +185,22 @@ Solution:
 
        // Every minute
        if (isMinuteInterval()) {
-           for each symbol in the 'in-memory price windows' {
+           sort the 'in-memory price windows' by 'valueChange' in descending order {
                // Calculate value change
                window = getWindow(symbol)
                'valueChange' = ((window.high - window.low) / window.low) * 100
-
-               // Persist to MongoDB
-               mongodb.insert({
-                   timestamp: currentTime,
-                   symbol: symbol,
-                   valueChange: 'valueChange',
-                   startPrice: window.startPrice,
-                   endPrice: window.currentPrice,
-                   windowStart: window.startTime,
-                   windowEnd: window.endTime
-               })
            }
+
+           // Persist to MongoDB the N symbols with highest 'valueChange'
+           mongodb.insert({
+                timestamp: currentTime,
+                symbol: symbol,
+                valueChange: 'valueChange',
+                startPrice: window.startPrice,
+                endPrice: window.currentPrice,
+                windowStart: window.startTime,
+                windowEnd: window.endTime
+           })
        }
    }
 
@@ -213,6 +212,8 @@ Solution:
        // If still failing, send to dead letter queue
    }
 ```
+
+(see [implementation details](#appendix-a-highest-value-change-service---implementation-notes))
 
 #### Sample persisted document
 
@@ -432,301 +433,180 @@ The decision to use MongoDB over PostgreSQL was driven by our system's specific 
 
 MongoDB's native time-series capabilities provide these features out-of-the-box, significantly reducing both development effort and operational complexity compared to implementing equivalent functionality in PostgreSQL.
 
-## License
+## Appendix A: `Highest Value Change` Service - implementation notes
 
-This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License. You can view the full license [here](https://creativecommons.org/licenses/by-nc/4.0/).
+For managing highest and lowest values within a 30-minute sliding window, a heap would be overkill and less efficient than simpler alternatives. Here's why:
 
-## Appendix A: `Highest Value Change` Service - Basic implementation
+For just tracking high/low values, we only need to know two things:
+
+- The maximum and minimum values
+- When each price occurred (to handle the 30-minute window expiration)
+
+A more efficient data structure would be a sorted linked list or a circular buffer with the following properties:
+
+**python**:
+
+```python
+class PricePoint:
+    price: float
+    timestamp: datetime
+
+class PriceWindow:
+    prices: CircularBuffer[PricePoint]  # Fixed size, O(1) insertion
+    currentHigh: PricePoint  # Tracks current highest price point
+    currentLow: PricePoint   # Tracks current lowest price point
+
+    def add(price, timestamp):
+        # O(1) operations
+        new_point = PricePoint(price, timestamp)
+        self.prices.append(new_point)
+
+        # Update high/low if needed
+        if price > self.currentHigh.price:
+            self.currentHigh = new_point
+        if price < self.currentLow.price:
+            self.currentLow = new_point
+
+        # If we evicted an old price that was our high/low,
+        # scan buffer to find new high/low - O(n) but happens rarely
+        if self.prices.did_evict_point():
+            if self.prices.evicted_point == self.currentHigh:
+                self.recalculate_high()
+            if self.prices.evicted_point == self.currentLow:
+                self.recalculate_low()
+```
+
+**javascript**:
 
 ```javascript
-class SymbolWindows {
-  constructor(windowMinutes = 30) {
-    this.windowMinutes = windowMinutes;
-    this.windows = new Map(); // symbol -> PriceWindow
-    this.highestChange = { symbol: null, change: 0 };
+class PricePoint {
+  constructor(price, timestamp) {
+    this.price = price;
+    this.timestamp = timestamp;
+  }
+}
+
+class CircularBuffer {
+  constructor(maxSize) {
+    this.buffer = new Array(maxSize);
+    this.head = 0;
+    this.tail = 0;
+    this.size = 0;
+    this.maxSize = maxSize;
+    this.lastEvictedPoint = null;
   }
 
-  getOrCreateWindow(symbol) {
-    let window = this.windows.get(symbol);
-    if (!window) {
-      window = new PriceWindow(this.windowMinutes);
-      this.windows.set(symbol, window);
+  append(item) {
+    if (this.size === this.maxSize) {
+      this.lastEvictedPoint = this.buffer[this.head];
+      this.head = (this.head + 1) % this.maxSize;
+      this.size--;
     }
-    return window;
+    this.buffer[this.tail] = item;
+    this.tail = (this.tail + 1) % this.maxSize;
+    this.size++;
   }
 
-  processQuote(quote) {
-    const window = this.getOrCreateWindow(quote.symbol);
-    window.add(quote);
-
-    // Update highest value change if needed
-    const change = window.getValueChange();
-    if (Math.abs(change) > Math.abs(this.highestChange.change)) {
-      this.highestChange = { symbol: quote.symbol, change };
-    }
+  didEvictPoint() {
+    return this.lastEvictedPoint !== null;
   }
 
-  getHighestChange() {
-    return this.highestChange;
+  get evictedPoint() {
+    return this.lastEvictedPoint;
   }
 
-  cleanup() {
-    const now = Date.now();
-    for (const [symbol, window] of this.windows.entries()) {
-      if (window.getLastUpdateTime() < now - 24 * 60 * 60 * 1000) {
-        this.windows.delete(symbol);
-      }
+  *[Symbol.iterator]() {
+    let current = this.head;
+    let count = 0;
+    while (count < this.size) {
+      yield this.buffer[current];
+      current = (current + 1) % this.maxSize;
+      count++;
     }
   }
 }
 
 class PriceWindow {
-  constructor(windowMinutes = 30) {
-    this.maxSize = windowMinutes * 60;
-    this.buffer = new Array(this.maxSize);
-    this.head = 0;
-    this.count = 0;
-    this.lastUpdateTime = 0;
+  constructor(windowSizeMinutes = 30) {
+    // Assuming 1 price update per second on average
+    const maxSize = windowSizeMinutes * 60;
+    this.prices = new CircularBuffer(maxSize);
+    this.currentHigh = null;
+    this.currentLow = null;
   }
 
-  add(quote) {
-    const now = Date.now();
-    const position = Math.floor((now % (30 * 60 * 1000)) / 1000);
+  add(price, timestamp) {
+    const newPoint = new PricePoint(price, timestamp);
+    this.prices.append(newPoint);
 
-    this.buffer[position] = {
-      timestamp: quote.timestamp,
-      price: quote.price,
-    };
+    // Update high/low if needed
+    if (!this.currentHigh || price > this.currentHigh.price) {
+      this.currentHigh = newPoint;
+    }
+    if (!this.currentLow || price < this.currentLow.price) {
+      this.currentLow = newPoint;
+    }
 
-    if (this.count < this.maxSize) this.count++;
-    this.head = (position + 1) % this.maxSize;
-    this.lastUpdateTime = now;
+    // If we evicted an old price that was our high/low,
+    // scan buffer to find new high/low - O(n) but happens rarely
+    if (this.prices.didEvictPoint()) {
+      const evictedPoint = this.prices.evictedPoint;
+      if (evictedPoint === this.currentHigh) {
+        this.recalculateHigh();
+      }
+      if (evictedPoint === this.currentLow) {
+        this.recalculateLow();
+      }
+    }
+  }
+
+  recalculateHigh() {
+    this.currentHigh = Array.from(this.prices).reduce((max, point) => (!max || point.price > max.price ? point : max), null);
+  }
+
+  recalculateLow() {
+    this.currentLow = Array.from(this.prices).reduce((min, point) => (!min || point.price < min.price ? point : min), null);
   }
 
   getValueChange() {
-    if (this.count < 2) return 0;
-
-    const now = Date.now();
-    let oldest = null;
-    let newest = null;
-
-    for (let i = 0; i < this.count; i++) {
-      const entry = this.buffer[(this.head + i) % this.maxSize];
-      if (!entry) continue;
-
-      const age = now - entry.timestamp;
-      if (age > 30 * 60 * 1000) continue;
-
-      if (!oldest || entry.timestamp < oldest.timestamp) oldest = entry;
-      if (!newest || entry.timestamp > newest.timestamp) newest = entry;
-    }
-
-    if (!oldest || !newest) return 0;
-    return ((newest.price - oldest.price) / oldest.price) * 100;
-  }
-
-  getLastUpdateTime() {
-    return this.lastUpdateTime;
-  }
-}
-
-class HighestValueChangeConsumer {
-  constructor(consumerId) {
-    this.consumerId = consumerId;
-    this.windows = null;
-    this.cleanupInterval = null;
-    this.coordinator = null;
-  }
-
-  async start() {
-    this.coordinator = new ConsumerGroupCoordinator('highest-value-change');
-    this.windows = await this.recoverState();
-    this.cleanupInterval = setInterval(() => this.windows.cleanup(), 60 * 60 * 1000);
-
-    kafka.consume('stock-quotes', {
-      groupId: 'highest-value-change',
-      fromLatest: true,
-      callback: (quote) => {
-        if (this.isSymbolAssigned(quote.symbol)) {
-          this.windows.processQuote(quote);
-        }
-      },
-    });
-
-    setInterval(() => this.reportHighestChange(), 60 * 1000);
-  }
-
-  isSymbolAssigned(symbol) {
-    const partition = this.coordinator.getPartitionForSymbol(symbol);
-    return partition === this.consumerId;
-  }
-
-  async recoverState() {
-    const windows = new SymbolWindows();
-    const assignedPartitions = await this.coordinator.getAssignedPartitions();
-
-    const quotes = await kafka.consume('stock-quotes', {
-      fromTimestamp: Date.now() - 30 * 60 * 1000,
-      partitions: assignedPartitions,
-    });
-
-    quotes.forEach((quote) => {
-      if (this.isSymbolAssigned(quote.symbol)) {
-        windows.processQuote(quote);
-      }
-    });
-
-    return windows;
-  }
-
-  async reportHighestChange() {
-    const highestChange = this.windows.getHighestChange();
-    await this.coordinator.reportHighestChange(this.consumerId, highestChange);
-
-    if (await this.coordinator.isLeader()) {
-      const allChanges = await this.coordinator.getAllHighestChanges();
-      const globalHighest = allChanges.reduce((max, curr) => (Math.abs(curr.change) > Math.abs(max.change) ? curr : max));
-
-      await kafka.produce('highest-value-changes', globalHighest);
-    }
-  }
-
-  stop() {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-    }
+    if (!this.currentHigh || !this.currentLow) return 0;
+    return ((this.currentHigh.price - this.currentLow.price) / this.currentLow.price) * 100;
   }
 }
 ```
 
-## Appendix B: `Daily Stats` Service - Basic implementation
+Why this is better than a heap:
 
-```javascript
-class DailyStatsService {
-  constructor(consumerId) {
-    this.consumerId = consumerId;
-    this.dailyStats = new Map(); // symbol -> DailyStats
-    this.coordinator = null;
-  }
+1. **Time Complexity**:
 
-  async start() {
-    this.coordinator = new ConsumerGroupCoordinator('daily-stats');
-    await this.recoverState();
+   - Heap: O(log n) for every insertion
+   - Circular Buffer with tracking: O(1) for most operations, O(n) only when high/low expires
 
-    kafka.consume('stock-quotes', {
-      groupId: 'daily-stats',
-      fromLatest: true,
-      callback: (quote) => {
-        if (this.isSymbolAssigned(quote.symbol)) {
-          this.processQuote(quote);
-        }
-      },
-    });
+2. **Memory Efficiency**:
 
-    // Schedule end-of-day processing
-    this.scheduleEndOfDay();
-  }
+   - Heap: Would need two heaps (min and max) to track both high and low
+   - Circular Buffer: Single structure with fixed size based on time window
 
-  isSymbolAssigned(symbol) {
-    const partition = this.coordinator.getPartitionForSymbol(symbol);
-    return partition === this.consumerId;
-  }
+3. **Window Management**:
 
-  async recoverState() {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+   - Heap: Complex to remove expired values, would need additional index
+   - Circular Buffer: Naturally expires old values, perfect for time-based window
 
-    const stats = await mongodb.dailyStats.find({
-      date: today,
-      partition: this.consumerId,
-    });
+4. **Access Speed**:
+   - Heap: O(1) for getting min/max but O(log n) for updates
+   - Our Solution: O(1) for everything except rare recalculation cases
 
-    stats.forEach((stat) => {
-      this.dailyStats.set(stat.symbol, new DailyStats(stat));
-    });
-  }
+The key insight is that we don't need sorted access to all prices - we only need the extremes, and those change relatively infrequently. When they do change, it's either because:
 
-  processQuote(quote) {
-    let stats = this.dailyStats.get(quote.symbol);
-    if (!stats) {
-      stats = new DailyStats({ symbol: quote.symbol });
-      this.dailyStats.set(quote.symbol, stats);
-    }
-    stats.processQuote(quote);
-  }
+1. A new price is higher/lower (O(1) to update)
+2. The current high/low expired (O(n) to recalculate, but happens only once per expiration)
 
-  scheduleEndOfDay() {
-    const now = new Date();
-    const marketClose = new Date(now);
-    marketClose.setHours(16, 0, 0, 0);
+This approach is particularly efficient for high-frequency trading data where you're getting many updates per second but only need to track the extremes within the window.
 
-    if (now > marketClose) {
-      marketClose.setDate(marketClose.getDate() + 1);
-    }
+## License
 
-    setTimeout(() => {
-      this.processEndOfDay();
-      this.scheduleEndOfDay();
-    }, marketClose - now);
-  }
+This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License. You can view the full license [here](https://creativecommons.org/licenses/by-nc/4.0/).
 
-  async processEndOfDay() {
-    const batch = [];
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
+```
 
-    for (const [symbol, stats] of this.dailyStats.entries()) {
-      batch.push({
-        date,
-        symbol,
-        partition: this.consumerId,
-        openPrice: stats.openPrice,
-        closePrice: stats.lastPrice,
-        highPrice: stats.highPrice,
-        lowPrice: stats.lowPrice,
-        priceChange: stats.getPriceChange(),
-        percentChange: stats.getPercentChange(),
-      });
-    }
-
-    await mongodb.dailyStats.insertMany(batch);
-    this.dailyStats.clear();
-  }
-
-  stop() {
-    // Cleanup and save state if needed
-  }
-}
-
-class DailyStats {
-  constructor(data = {}) {
-    this.symbol = data.symbol;
-    this.openPrice = data.openPrice || null;
-    this.lastPrice = data.closePrice || null;
-    this.highPrice = data.highPrice || -Infinity;
-    this.lowPrice = data.lowPrice || Infinity;
-    this.quoteCount = 0;
-  }
-
-  processQuote(quote) {
-    if (this.quoteCount === 0) {
-      this.openPrice = quote.price;
-    }
-
-    this.lastPrice = quote.price;
-    this.highPrice = Math.max(this.highPrice, quote.price);
-    this.lowPrice = Math.min(this.lowPrice, quote.price);
-    this.quoteCount++;
-  }
-
-  getPriceChange() {
-    if (!this.openPrice || !this.lastPrice) return 0;
-    return this.lastPrice - this.openPrice;
-  }
-
-  getPercentChange() {
-    if (!this.openPrice || !this.lastPrice) return 0;
-    return ((this.lastPrice - this.openPrice) / this.openPrice) * 100;
-  }
-}
 ```
