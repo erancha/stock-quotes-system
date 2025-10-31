@@ -165,7 +165,7 @@ Solution:
 
 ```javascript
 1. Initialize:
-   - Create 'Kafka consumer' (group: 'stock-db-writers')
+   - Create 'Kafka consumer' (group: 'highest-value-change-cg')
    - Initialize 'in-memory price windows' // 30-min sliding windows, one per symbol'
    - Connect to MongoDB
 
